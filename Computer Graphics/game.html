@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+
+<html>
+	<head>
+		<title>Game</title>
+		<style>
+			body { margin: 0; }
+			canvas { width: 100%; height: 100% }
+		</style>
+	</head>
+	<body>
+		<div id="score" style ="position: absolute;
+			top: 10px;
+			right: 10px;
+			width: 100%;
+			font-size:25px;
+			text-align: right;
+			z-index: 100;
+			display:block;"></div>
+		<script src="http://threejs.org/build/three.min.js"></script>
+		<script src = "FirstPersonControls.js"></script>
+		<script src = "http://threejs.org/examples/js/loaders/OBJLoader.js"></script>
+		<script src = "http://threejs.org/examples/js/loaders/MTLLoader.js"></script>
+		<script src="http://threejs.org/examples/js/Detector.js"></script>
+		<script src="http://threejs.org/examples/js/libs/stats.min.js"></script>
+		<script type = "x-shader/x-vertex" id = "vertexShader1" >
+			varying vec3 vUv1;
+			void main() {
+				vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+				gl_Position = projectionMatrix * modelViewPosition;
+			}
+		</script>
+		
+		<script type = "x-shader/x-vertex" id = "vertexShader2" >
+			varying vec2 vUv;
+			void main() {
+				vUv = uv;
+				vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+				gl_Position = projectionMatrix * modelViewPosition;
+			}
+		</script>
+		
+		<script type = "x-shader/x-fragment" id = "fragmentShader1" >
+			uniform float delta;
+			varying float vOpacity;
+			varying vec3 vUv1;
+			void main() {
+				float r = 1.0 + cos(vUv1.x * delta);
+				float g = 0.5 + sin(delta) * 0.5;
+				float b = 0.0;
+				gl_FragColor = vec4(r, g, b, 1.0);
+			}
+		</script>
+		
+		<script type = "x-shader/x-fragment" id = "fragmentShader2" >
+			uniform sampler2D baseTexture;
+			uniform float baseSpeed;
+			uniform sampler2D noiseTexture;
+			uniform float noiseScale;
+			uniform float alpha;
+			uniform float time;
+
+			varying vec2 vUv;
+			void main() 
+			{
+				vec2 uvTimeShift = vUv + vec2( -0.7, 1.5 ) * time * baseSpeed;	
+				vec4 noiseGeneratorTimeShift = texture2D( noiseTexture, uvTimeShift );
+				vec2 uvNoiseTimeShift = vUv + noiseScale * vec2( noiseGeneratorTimeShift.r, noiseGeneratorTimeShift.b );
+				vec4 baseColor = texture2D( baseTexture, uvNoiseTimeShift );
+
+				baseColor.a = alpha;
+				gl_FragColor = baseColor;
+			}  
+		</script>
+		
+		<script>
+
+			//define constants
+			var WALL = 200,
+				UNIT = 200,
+				SPEED = 200,
+				BULLETSPEED = SPEED * 10,
+				OBSTACLES = 80,
+				OTHERS = 2;
+				POINTS = 20;
+				score = 0;
+
+			//declare elements needed
+			var scene, camera, renderer, controls, cube, clock,loader, mtlLoader;
+			
+			var mapSize = 20;
+			var map = generateMap();
+			var pointsRef = generatePointsRef();
+			
+			
+			
+			function generatePointsRef() {
+				var map = new Array(mapSize);
+				for(var i = 0; i < mapSize; i++) {
+					map[i] = new Array(mapSize);
+				}
+				return map;
+			}
+			
+			var totPoints;
+			
+			function generateMap() {
+				var numObs = 0;
+				var others = 0;
+				var nump = 0;
+				var map = new Array(mapSize);
+				for(var i = 0; i < mapSize; i++) {
+					map[i] = new Array(mapSize);
+					if(i == 0 || i == mapSize - 1)
+						for(var j = 0; j < mapSize; j++)
+							map[i][j] = 1;
+					else {
+						map[i][0] = map[i][mapSize - 1] = 1;
+						for(var j = 1; j < mapSize - 1; j++) {
+							var p = Math.random();	//generate obstacles in a random way
+							var q = Math.random();
+							if(!(i == mapSize/2 + 2 && j == mapSize/2 + 2 || i == mapSize/2 - 6 && j == mapSize/2 - 3 || i == mapSize/2 + 3 && j == mapSize/2 + 6 || i == mapSize/2 && j == mapSize/2)) {
+								if(numObs < OBSTACLES && p < 0.2) {
+									map[i][j] = 2;
+									numObs += 1;
+								}
+								else {
+									if(q < 0.1 && nump < POINTS) {
+										map[i][j] = -1;
+										nump += 1
+									}
+								}
+							}
+						}
+					}
+					totPoints = nump;
+				}
+				map[mapSize/2 + 2][mapSize/2 + 2] = map[mapSize/2 - 6][mapSize/2 - 3] = map[mapSize/2 + 3][mapSize/2 + 6] = 3;
+				return map;
+			}
+			
+			function checkWallCollision(v) {
+				var c = getMapSector(v);
+				if(map[c.x][c.z] < 0) {
+					score += 1;
+					document.getElementById("score").innerHTML = "Score: " + score;
+					pointsRef[c.x][c.z].visible = false;
+					map[c.x][c.z] = 0;
+				}
+				return map[c.x][c.z] > 0;
+			}		
+			
+			function getMapSector(v) {
+				var x = Math.floor((v.x + UNIT / 2) / UNIT + mapSize/2);
+				var z = Math.floor((v.z + UNIT / 2) / UNIT + mapSize/2);
+				return {x: x, z: z};
+			}	
+			
+			var uniforms1, uniforms2;
+				
+			function initialize() {
+				clock = new THREE.Clock();
+				scene = new THREE.Scene();
+				loader = new THREE.ObjectLoader();
+				mtlLoader = new THREE.MTLLoader();
+				score = 0;
+				document.getElementById("score").innerHTML = "Score: " + score;
+								
+				camera = new THREE.PerspectiveCamera( 75, window.innerWidth/window.innerHeight, 0.1, 5000 );
+				camera.position.y = WALL/2;
+				scene.add(camera);
+				
+				//initialize the controls
+				controls = new THREE.FirstPersonControls(camera);
+				controls.movementSpeed = SPEED;
+				controls.lookSpeed = 0.05;
+				controls.lookVertical = false;
+				controls.noFly = true;
+				
+				//setup the scene
+				sceneSetup();
+				
+				//start rendering, setting a background
+				renderer = new THREE.WebGLRenderer();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.domElement.style.backgroundColor = '#D6F1FF';
+				document.body.appendChild(renderer.domElement);
+				renderer.setClearColor(0x7ec0ee);
+			}
+			
+			function sceneSetup() {
+				/*var geometry = new THREE.BoxGeometry( 1000, 20, 1000 );
+				var material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
+				cube = new THREE.Mesh( geometry, material );
+				scene.add( cube );
+				cube.position.x = 0;
+				cube.position.y = 0;
+				cube.position.z = 0;*/
+				var floor = new THREE.Mesh(new THREE.CubeGeometry(mapSize * UNIT, 10, mapSize * UNIT),new THREE.MeshPhongMaterial({map: THREE.ImageUtils.loadTexture('http://localhost:8000/Textures/earth.jpg')}));
+				floor.position.x = 0;
+				floor.position.y = 0;
+				floor.position.z = 0;
+				scene.add(floor);
+				
+				var light = new THREE.PointLight(0xff0000, 1, 100);
+				light.position.set(0,0,UNIT*20);
+				scene.add(light)
+				
+				var cube = new THREE.CubeGeometry(UNIT, WALL, UNIT);
+				
+				var lavaTexture = new THREE.ImageUtils.loadTexture('http://localhost:8000/Textures/lava.jpg');
+				lavaTexture.wrapS = lavaTexture.wrapT = THREE.RepeatWrapping;
+				
+				var noiseTexture = new THREE.ImageUtils.loadTexture('http://localhost:8000/Textures/cloud.png');
+				noiseTexture.wrapS = noiseTexture.wrapT = THREE.RepeatWrapping;
+				
+				uniforms1 = {delta: {value: 0}}
+				
+				uniforms2 = {
+					baseTexture: { type:"t", value: lavaTexture},
+					baseSpeed: { type:"f", value: 0.05},
+					noiseTexture: { type:"t", value: noiseTexture},
+					noiseScale: { type:"f", value: 0.5337},
+					alpha: { type:"f", value: 1.0},
+					time: { type:"f", value: 1.0},
+				}
+				
+				var materials = [new THREE.MeshPhongMaterial({map: THREE.ImageUtils.loadTexture('http://localhost:8000/Textures/greyWall.jpg')}),
+						 new THREE.MeshPhongMaterial({map: THREE.ImageUtils.loadTexture('http://localhost:8000/Textures/yellowWall.jpg')}),
+						 new THREE.MeshPhongMaterial({map: THREE.ImageUtils.loadTexture('http://localhost:8000/Models/column/marble.jpg')}),
+						 new THREE.MeshPhongMaterial({map: THREE.ImageUtils.loadTexture('http://localhost:8000/Models/pyramid/architecture.jpg')}),
+						 new THREE.ShaderMaterial({
+						 	uniforms: uniforms1,
+						 	vertexShader: document.getElementById('vertexShader1').textContent,
+						 	fragmentShader: document.getElementById('fragmentShader1').textContent
+						 }),
+						 new THREE.ShaderMaterial({
+						 	uniforms: uniforms2,
+						 	vertexShader: document.getElementById('vertexShader2').textContent,
+						 	fragmentShader: document.getElementById('fragmentShader2').textContent
+						 })];						 
+								 
+				var links = ["http://localhost:8000/Models/eiffel/eiffel.json",
+							 "http://localhost:8000/Models/tower/tower.json",
+							 "http://localhost:8000/Models/lucy/lucy.json"]
+				
+				//generate the walls of the maze
+				
+				var nump = 0;
+				for(var i = 0; i < mapSize; i++)
+					for(var j = 0; j < mapSize; j++)
+						if(map[i][j] == 1 ||map[i][j] == 2) {
+							var wall = new THREE.Mesh(cube,materials[map[i][j] - 1]);
+							wall.position.x = (i - mapSize/2) * UNIT;
+							wall.position.y = WALL/2;
+							wall.position.z = (j - mapSize/2) * UNIT;
+							scene.add(wall);
+						}
+						else {
+							if(map[i][j] == -1) {
+								if(nump < totPoints/2) {
+									var point = new THREE.Mesh(new THREE.SphereGeometry( 5, 32, 32 ),materials[4]);
+									point.position.x = (i - mapSize/2) * UNIT;
+									point.position.y = WALL/2;
+									point.position.z = (j - mapSize/2) * UNIT;
+									point.scale.set(2,2,2);
+									pointsRef[i][j] = point;
+									nump += 1;
+									scene.add(point)
+								}
+								else {
+									var point = new THREE.Mesh(new THREE.SphereGeometry( 5, 32, 32 ),materials[5]);
+									console.log(totPoints);
+									point.position.x = (i - mapSize/2) * UNIT;
+									point.position.y = WALL/2;
+									point.position.z = (j - mapSize/2) * UNIT;
+									point.scale.set(2,2,2);
+									pointsRef[i][j] = point;
+									scene.add(point)
+								}	
+								
+							}
+						}
+				//load the objects
+				loader = new THREE.ObjectLoader();
+				loader.load(
+				links[0],
+				function (object) {
+					object.scale.set(1,1,1);
+					object.position.x = 2 * UNIT;
+					object.position.y = -10 ;
+					object.position.z = 2 * UNIT;
+					scene.add(object);
+				}
+				
+				);
+				loader.load(
+				links[2],
+				function (object) {
+					object.scale.set(5,5,5);
+					object.position.x = 3 * UNIT;
+					object.position.y = 0 ;
+					object.position.z = 6 * UNIT;
+					object.rotation.y += Math.PI;
+					scene.add(object);
+				}
+		
+				);
+				
+				loader.load(
+				links[0],
+				function (object) {
+					object.scale.set(1,1,1);
+					object.position.x = -6 * UNIT;
+					object.position.y = -10 ;
+					object.position.z = -3 * UNIT;
+					scene.add(object);
+				}
+				
+				);
+				
+			}
+			
+			var delta2 = 0;
+			
+			var animate = function () {
+				requestAnimationFrame( animate );
+				
+				delta2 += 0.1;
+
+				var delta = clock.getDelta();
+				controls.update(delta);
+					
+				uniforms1.delta.value = 0.5 + Math.sin(delta2) * 0.5;
+				uniforms2.time.value += delta;
+
+				renderer.render(scene, camera);
+			}
+			
+			initialize();
+			animate();
+		</script>
+	</body>
+</html>
+	
